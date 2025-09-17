@@ -4,13 +4,12 @@
 
 [![GitHub Release](https://img.shields.io/github/v/release/matanryngler/parallax)](https://github.com/matanryngler/parallax/releases/latest)
 [![CI/CD Pipeline](https://github.com/matanryngler/parallax/actions/workflows/ci.yml/badge.svg)](https://github.com/matanryngler/parallax/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/matanryngler/parallax/branch/main/graph/badge.svg)](https://codecov.io/gh/matanryngler/parallax)
 [![Go Report Card](https://goreportcard.com/badge/github.com/matanryngler/parallax)](https://goreportcard.com/report/github.com/matanryngler/parallax)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 [![Container Images](https://img.shields.io/badge/Container-GHCR-blue?logo=docker&logoColor=white)](https://github.com/matanryngler/parallax/pkgs/container/parallax)
 [![Helm Charts](https://img.shields.io/badge/Helm-GHCR%20%2B%20Releases-0f1689?logo=helm&logoColor=white)](https://github.com/matanryngler/parallax/releases)
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.20+-326ce5?logo=kubernetes&logoColor=white)](https://kubernetes.io/)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.29+-326ce5?logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/matanryngler/parallax)](https://golang.org/)
 
 **Dynamic parallel execution for Kubernetes workloads**
@@ -93,7 +92,7 @@ graph TB
 
 ### Prerequisites
 
-- Kubernetes 1.20+ cluster
+- Kubernetes 1.29+ cluster
 - Helm 3.0+ (recommended)
 - `kubectl` configured
 
