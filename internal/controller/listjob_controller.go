@@ -152,6 +152,10 @@ func (r *ListJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	podSpec := corev1.PodSpec{
+		ServiceAccountName: listJob.Spec.Template.ServiceAccountName,
+		ImagePullSecrets:   listJob.Spec.Template.ImagePullSecrets,
+		Tolerations:        listJob.Spec.Template.Tolerations,
+		Affinity:           listJob.Spec.Template.Affinity,
 		Volumes: []corev1.Volume{
 			{
 				Name: "list",
@@ -196,12 +200,13 @@ func (r *ListJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		},
 		Containers: []corev1.Container{
 			{
-				Name:      "main",
-				Image:     listJob.Spec.Template.Image,
-				Command:   []string{"sh", "-c", ". /shared/env.sh && " + strings.Join(listJob.Spec.Template.Command, " ")},
-				Resources: listJob.Spec.Template.Resources,
-				Env:       listJob.Spec.Template.Env,
-				EnvFrom:   listJob.Spec.Template.EnvFrom,
+				Name:            "main",
+				Image:           listJob.Spec.Template.Image,
+				ImagePullPolicy: listJob.Spec.Template.ImagePullPolicy,
+				Command:         []string{"sh", "-c", ". /shared/env.sh && " + strings.Join(listJob.Spec.Template.Command, " ")},
+				Resources:       listJob.Spec.Template.Resources,
+				Env:             listJob.Spec.Template.Env,
+				EnvFrom:         listJob.Spec.Template.EnvFrom,
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "shared", MountPath: "/shared"},
 				},
@@ -215,6 +220,8 @@ func (r *ListJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		Completions:             &[]int32{int32(len(list))}[0],
 		CompletionMode:          func() *batchv1.CompletionMode { mode := batchv1.IndexedCompletion; return &mode }(),
 		TTLSecondsAfterFinished: listJob.Spec.TTLSecondsAfterFinished,
+		BackoffLimit:            listJob.Spec.BackoffLimit,
+		ActiveDeadlineSeconds:   listJob.Spec.ActiveDeadlineSeconds,
 		Template: corev1.PodTemplateSpec{
 			Spec: podSpec,
 		},

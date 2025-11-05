@@ -38,6 +38,8 @@ type ListCronJobSpec struct {
 	SuccessfulJobsHistoryLimit *int32                    `json:"successfulJobsHistoryLimit,omitempty"`
 	FailedJobsHistoryLimit     *int32                    `json:"failedJobsHistoryLimit,omitempty"`
 	Suspend                    *bool                     `json:"suspend,omitempty"`
+	BackoffLimit               *int32                    `json:"backoffLimit,omitempty"`
+	ActiveDeadlineSeconds      *int64                    `json:"activeDeadlineSeconds,omitempty"`
 }
 
 // ListCronJobStatus defines the observed state of ListCronJob.
