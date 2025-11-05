@@ -236,6 +236,8 @@ func (r *ListCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				Image:     listCronJob.Spec.Template.Image,
 				Command:   []string{"sh", "-c", ". /shared/env.sh && " + strings.Join(listCronJob.Spec.Template.Command, " ")},
 				Resources: listCronJob.Spec.Template.Resources,
+				Env:       listCronJob.Spec.Template.Env,
+				EnvFrom:   listCronJob.Spec.Template.EnvFrom,
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "shared", MountPath: "/shared"},
 				},

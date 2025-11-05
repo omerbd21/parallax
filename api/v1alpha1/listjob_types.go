@@ -9,6 +9,8 @@ type JobTemplateSpec struct {
 	Image     string                      `json:"image"`
 	Command   []string                    `json:"command"`
 	EnvName   string                      `json:"envName"`
+	Env       []corev1.EnvVar             `json:"env,omitempty"`
+	EnvFrom   []corev1.EnvFromSource      `json:"envFrom,omitempty"`
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 

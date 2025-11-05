@@ -200,6 +200,8 @@ func (r *ListJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				Image:     listJob.Spec.Template.Image,
 				Command:   []string{"sh", "-c", ". /shared/env.sh && " + strings.Join(listJob.Spec.Template.Command, " ")},
 				Resources: listJob.Spec.Template.Resources,
+				Env:       listJob.Spec.Template.Env,
+				EnvFrom:   listJob.Spec.Template.EnvFrom,
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "shared", MountPath: "/shared"},
 				},
