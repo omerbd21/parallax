@@ -6,10 +6,17 @@ import (
 )
 
 type JobTemplateSpec struct {
-	Image     string                      `json:"image"`
-	Command   []string                    `json:"command"`
-	EnvName   string                      `json:"envName"`
-	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	Image              string                        `json:"image"`
+	Command            []string                      `json:"command"`
+	EnvName            string                        `json:"envName"`
+	Env                []corev1.EnvVar               `json:"env,omitempty"`
+	EnvFrom            []corev1.EnvFromSource        `json:"envFrom,omitempty"`
+	Resources          corev1.ResourceRequirements   `json:"resources,omitempty"`
+	ServiceAccountName string                        `json:"serviceAccountName,omitempty"`
+	ImagePullPolicy    corev1.PullPolicy             `json:"imagePullPolicy,omitempty"`
+	ImagePullSecrets   []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+	Tolerations        []corev1.Toleration           `json:"tolerations,omitempty"`
+	Affinity           *corev1.Affinity              `json:"affinity,omitempty"`
 }
 
 type ListJobSpec struct {
@@ -19,6 +26,8 @@ type ListJobSpec struct {
 	Template                JobTemplateSpec  `json:"template"`
 	TTLSecondsAfterFinished *int32           `json:"ttlSecondsAfterFinished,omitempty"`
 	DeleteAfter             *metav1.Duration `json:"deleteAfter,omitempty"`
+	BackoffLimit            *int32           `json:"backoffLimit,omitempty"`
+	ActiveDeadlineSeconds   *int64           `json:"activeDeadlineSeconds,omitempty"`
 }
 
 type ListJobStatus struct {
