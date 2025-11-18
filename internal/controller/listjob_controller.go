@@ -151,53 +151,66 @@ func (r *ListJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		envName = "ITEM"
 	}
 
+	// Prepare volumes - start with required volumes, then add user-specified ones
+	volumes := []corev1.Volume{
+		{
+			Name: "list",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: jobCm.Name},
+				},
+			},
+		},
+		{
+			Name:         "shared",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		},
+	}
+	volumes = append(volumes, listJob.Spec.Template.Volumes...)
+
+	// Prepare volume mounts for main container - start with required mount, then add user-specified ones
+	mainVolumeMounts := []corev1.VolumeMount{
+		{Name: "shared", MountPath: "/shared"},
+	}
+	mainVolumeMounts = append(mainVolumeMounts, listJob.Spec.Template.VolumeMounts...)
+
+	// Prepare init containers - start with user-specified ones, then add the required internal init container last
+	initContainers := make([]corev1.Container, len(listJob.Spec.Template.InitContainers))
+	copy(initContainers, listJob.Spec.Template.InitContainers)
+	initContainers = append(initContainers, corev1.Container{
+		Name:  "parallax-init",
+		Image: "busybox",
+		Command: []string{"sh", "-c", fmt.Sprintf(`
+			# Read the items file
+			ITEMS=$(cat /list/items)
+			# Get the item at the given index (0-based)
+			VAL=$(echo "$ITEMS" | sed -n "$((JOB_COMPLETION_INDEX+1))p")
+			# Export the value
+			echo "export %s=$VAL" > /shared/env.sh
+		`, envName)},
+		Env: []corev1.EnvVar{
+			{
+				Name: "JOB_COMPLETION_INDEX",
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{
+						FieldPath: "metadata.annotations['batch.kubernetes.io/job-completion-index']",
+					},
+				},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "list", MountPath: "/list"},
+			{Name: "shared", MountPath: "/shared"},
+		},
+	})
+
 	podSpec := corev1.PodSpec{
 		ServiceAccountName: listJob.Spec.Template.ServiceAccountName,
 		ImagePullSecrets:   listJob.Spec.Template.ImagePullSecrets,
 		Tolerations:        listJob.Spec.Template.Tolerations,
 		Affinity:           listJob.Spec.Template.Affinity,
-		Volumes: []corev1.Volume{
-			{
-				Name: "list",
-				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{Name: jobCm.Name},
-					},
-				},
-			},
-			{
-				Name:         "shared",
-				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-			},
-		},
-		InitContainers: []corev1.Container{
-			{
-				Name:  "init",
-				Image: "busybox",
-				Command: []string{"sh", "-c", fmt.Sprintf(`
-					# Read the items file
-					ITEMS=$(cat /list/items)
-					# Get the item at the given index (0-based)
-					VAL=$(echo "$ITEMS" | sed -n "$((JOB_COMPLETION_INDEX+1))p")
-					# Export the value
-					echo "export %s=$VAL" > /shared/env.sh
-				`, envName)},
-				Env: []corev1.EnvVar{
-					{
-						Name: "JOB_COMPLETION_INDEX",
-						ValueFrom: &corev1.EnvVarSource{
-							FieldRef: &corev1.ObjectFieldSelector{
-								FieldPath: "metadata.annotations['batch.kubernetes.io/job-completion-index']",
-							},
-						},
-					},
-				},
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: "list", MountPath: "/list"},
-					{Name: "shared", MountPath: "/shared"},
-				},
-			},
-		},
+		Volumes:            volumes,
+		InitContainers:     initContainers,
 		Containers: []corev1.Container{
 			{
 				Name:            "main",
@@ -207,9 +220,8 @@ func (r *ListJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				Resources:       listJob.Spec.Template.Resources,
 				Env:             listJob.Spec.Template.Env,
 				EnvFrom:         listJob.Spec.Template.EnvFrom,
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: "shared", MountPath: "/shared"},
-				},
+				VolumeMounts:    mainVolumeMounts,
+				Ports:           listJob.Spec.Template.Ports,
 			},
 		},
 		RestartPolicy: corev1.RestartPolicyNever,
@@ -223,6 +235,9 @@ func (r *ListJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		BackoffLimit:            listJob.Spec.BackoffLimit,
 		ActiveDeadlineSeconds:   listJob.Spec.ActiveDeadlineSeconds,
 		Template: corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: listJob.Spec.Template.Labels,
+			},
 			Spec: podSpec,
 		},
 	}
