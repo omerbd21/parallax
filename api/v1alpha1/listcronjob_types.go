@@ -27,12 +27,13 @@ import (
 
 // ListCronJobSpec defines the desired state of ListCronJob.
 type ListCronJobSpec struct {
-	ListSourceRef              string                    `json:"listSourceRef,omitempty"`
-	StaticList                 []string                  `json:"staticList,omitempty"`
-	Parallelism                int32                     `json:"parallelism"`
-	Template                   JobTemplateSpec           `json:"template"`
-	TTLSecondsAfterFinished    *int32                    `json:"ttlSecondsAfterFinished,omitempty"`
-	Schedule                   string                    `json:"schedule"`
+	ListSourceRef           string          `json:"listSourceRef,omitempty"`
+	StaticList              []string        `json:"staticList,omitempty"`
+	Parallelism             int32           `json:"parallelism"`
+	Template                JobTemplateSpec `json:"template"`
+	TTLSecondsAfterFinished *int32          `json:"ttlSecondsAfterFinished,omitempty"`
+	Schedule                string          `json:"schedule"`
+	// +kubebuilder:default=Forbid
 	ConcurrencyPolicy          batchv1.ConcurrencyPolicy `json:"concurrencyPolicy,omitempty"`
 	StartingDeadlineSeconds    *int64                    `json:"startingDeadlineSeconds,omitempty"`
 	SuccessfulJobsHistoryLimit *int32                    `json:"successfulJobsHistoryLimit,omitempty"`
