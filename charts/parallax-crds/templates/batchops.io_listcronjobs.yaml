@@ -46,6 +46,7 @@ spec:
                 format: int32
                 type: integer
               concurrencyPolicy:
+                default: Forbid
                 description: |-
                   ConcurrencyPolicy describes how the job will be handled.
                   Only one of the following concurrent policies may be specified.
