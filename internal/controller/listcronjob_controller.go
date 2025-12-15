@@ -187,54 +187,67 @@ func (r *ListCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		envName = "ITEM"
 	}
 
+	// Prepare volumes - start with required volumes, then add user-specified ones
+	volumes := []corev1.Volume{
+		{
+			Name: "list",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: jobCm.Name},
+					Optional:             func() *bool { b := true; return &b }(),
+				},
+			},
+		},
+		{
+			Name:         "shared",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		},
+	}
+	volumes = append(volumes, listCronJob.Spec.Template.Volumes...)
+
+	// Prepare volume mounts for main container - start with required mount, then add user-specified ones
+	mainVolumeMounts := []corev1.VolumeMount{
+		{Name: "shared", MountPath: "/shared"},
+	}
+	mainVolumeMounts = append(mainVolumeMounts, listCronJob.Spec.Template.VolumeMounts...)
+
+	// Prepare init containers - start with user-specified ones, then add the required internal init container last
+	initContainers := make([]corev1.Container, len(listCronJob.Spec.Template.InitContainers))
+	copy(initContainers, listCronJob.Spec.Template.InitContainers)
+	initContainers = append(initContainers, corev1.Container{
+		Name:  "parallax-init",
+		Image: "busybox",
+		Command: []string{"sh", "-c", fmt.Sprintf(`
+			# Read the items file
+			ITEMS=$(cat /list/items)
+			# Get the item at the given index (0-based)
+			VAL=$(echo "$ITEMS" | sed -n "$((JOB_COMPLETION_INDEX+1))p")
+			# Export the value
+			echo "export %s=$VAL" > /shared/env.sh
+		`, envName)},
+		Env: []corev1.EnvVar{
+			{
+				Name: "JOB_COMPLETION_INDEX",
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{
+						FieldPath: "metadata.annotations['batch.kubernetes.io/job-completion-index']",
+					},
+				},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "list", MountPath: "/list", ReadOnly: true},
+			{Name: "shared", MountPath: "/shared"},
+		},
+	})
+
 	podSpec := corev1.PodSpec{
 		ServiceAccountName: listCronJob.Spec.Template.ServiceAccountName,
 		ImagePullSecrets:   listCronJob.Spec.Template.ImagePullSecrets,
 		Tolerations:        listCronJob.Spec.Template.Tolerations,
 		Affinity:           listCronJob.Spec.Template.Affinity,
-		Volumes: []corev1.Volume{
-			{
-				Name: "list",
-				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{Name: jobCm.Name},
-						Optional:             func() *bool { b := true; return &b }(),
-					},
-				},
-			},
-			{
-				Name:         "shared",
-				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-			},
-		},
-		InitContainers: []corev1.Container{
-			{
-				Name:  "init",
-				Image: "busybox",
-				Command: []string{"sh", "-c", fmt.Sprintf(`
-					# Read the items file
-					ITEMS=$(cat /list/items)
-					# Get the item at the given index (0-based)
-					VAL=$(echo "$ITEMS" | sed -n "$((JOB_COMPLETION_INDEX+1))p")
-					# Export the value
-					echo "export %s=$VAL" > /shared/env.sh
-				`, envName)},
-				Env: []corev1.EnvVar{
-					{
-						Name: "JOB_COMPLETION_INDEX",
-						ValueFrom: &corev1.EnvVarSource{
-							FieldRef: &corev1.ObjectFieldSelector{
-								FieldPath: "metadata.annotations['batch.kubernetes.io/job-completion-index']",
-							},
-						},
-					},
-				},
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: "list", MountPath: "/list", ReadOnly: true},
-					{Name: "shared", MountPath: "/shared"},
-				},
-			},
-		},
+		Volumes:            volumes,
+		InitContainers:     initContainers,
 		Containers: []corev1.Container{
 			{
 				Name:            "main",
@@ -244,9 +257,8 @@ func (r *ListCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				Resources:       listCronJob.Spec.Template.Resources,
 				Env:             listCronJob.Spec.Template.Env,
 				EnvFrom:         listCronJob.Spec.Template.EnvFrom,
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: "shared", MountPath: "/shared"},
-				},
+				VolumeMounts:    mainVolumeMounts,
+				Ports:           listCronJob.Spec.Template.Ports,
 			},
 		},
 		RestartPolicy: corev1.RestartPolicyNever,
@@ -260,6 +272,9 @@ func (r *ListCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		BackoffLimit:            listCronJob.Spec.BackoffLimit,
 		ActiveDeadlineSeconds:   listCronJob.Spec.ActiveDeadlineSeconds,
 		Template: corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: listCronJob.Spec.Template.Labels,
+			},
 			Spec: podSpec,
 		},
 	}

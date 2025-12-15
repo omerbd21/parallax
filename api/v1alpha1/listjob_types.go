@@ -17,6 +17,11 @@ type JobTemplateSpec struct {
 	ImagePullSecrets   []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 	Tolerations        []corev1.Toleration           `json:"tolerations,omitempty"`
 	Affinity           *corev1.Affinity              `json:"affinity,omitempty"`
+	Labels             map[string]string             `json:"labels,omitempty"`
+	Volumes            []corev1.Volume               `json:"volumes,omitempty"`
+	VolumeMounts       []corev1.VolumeMount          `json:"volumeMounts,omitempty"`
+	Ports              []corev1.ContainerPort        `json:"ports,omitempty"`
+	InitContainers     []corev1.Container            `json:"initContainers,omitempty"`
 }
 
 type ListJobSpec struct {
