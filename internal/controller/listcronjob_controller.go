@@ -23,7 +23,7 @@ import (
 	"time"
 
 	batchopsv1alpha1 "github.com/matanryngler/parallax/api/v1alpha1"
-	"github.com/robfig/cron/v3"
+	"github.com/matanryngler/parallax/internal/metrics"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -54,6 +54,7 @@ const listCronJobFinalizer = "listcronjob.batchops.io/finalizer"
 // +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps/status,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=get;list
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -357,6 +358,15 @@ func (r *ListCronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ListCronJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Setup field indexer for Events by involvedObject.name
+	// This allows efficient querying of events for a specific CronJob
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Event{}, "involvedObject.name", func(obj client.Object) []string {
+		event := obj.(*corev1.Event)
+		return []string{event.InvolvedObject.Name}
+	}); err != nil {
+		return fmt.Errorf("failed to setup field indexer for events: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&batchopsv1alpha1.ListCronJob{}).
 		Watches(
@@ -376,6 +386,12 @@ func (r *ListCronJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *ListCronJobReconciler) trackCronJobCycles(ctx context.Context, listCronJob *batchopsv1alpha1.ListCronJob, cronJob *batchv1.CronJob) error {
 	log := ctrl.LoggerFrom(ctx)
 
+	// Track active jobs metric
+	metrics.CronJobActiveJobs.WithLabelValues(
+		listCronJob.Name,
+		listCronJob.Namespace,
+	).Set(float64(len(cronJob.Status.Active)))
+
 	// Check if a new cycle started
 	if cronJob.Status.LastScheduleTime != nil {
 		// Compare with our tracked last schedule time
@@ -389,6 +405,21 @@ func (r *ListCronJobReconciler) trackCronJobCycles(ctx context.Context, listCron
 				"schedule", listCronJob.Spec.Schedule,
 				"scheduleTime", cronJob.Status.LastScheduleTime.Time,
 				"activeJobs", len(cronJob.Status.Active))
+
+			// Increment cycle started metric
+			metrics.CronJobCyclesStarted.WithLabelValues(
+				listCronJob.Name,
+				listCronJob.Namespace,
+			).Inc()
+
+			// Calculate and record cycle duration if we have a previous schedule time
+			if listCronJob.Status.LastScheduleTime != nil {
+				duration := cronJob.Status.LastScheduleTime.Time.Sub(listCronJob.Status.LastScheduleTime.Time).Seconds()
+				metrics.CronJobCycleDuration.WithLabelValues(
+					listCronJob.Name,
+					listCronJob.Namespace,
+				).Set(duration)
+			}
 
 			// Update our tracked time with retry on conflict
 			newScheduleTime := cronJob.Status.LastScheduleTime
@@ -405,44 +436,90 @@ func (r *ListCronJobReconciler) trackCronJobCycles(ctx context.Context, listCron
 		}
 	}
 
-	// Detect skipped cycles for Forbid policy by checking CronJob status
-	if listCronJob.Spec.ConcurrencyPolicy == batchv1.ForbidConcurrent &&
-		cronJob.Status.LastScheduleTime != nil &&
-		len(cronJob.Status.Active) > 0 {
-
-		// Parse the cron schedule to determine when next cycle should occur
-		nextSchedule, err := getNextScheduleTime(listCronJob.Spec.Schedule, cronJob.Status.LastScheduleTime.Time)
-		if err != nil {
-			log.V(1).Info("Failed to parse cron schedule", "error", err)
-			return nil // Don't fail reconciliation for this
-		}
-
-		// If we're past the next schedule time and there are still active jobs,
-		// a skip likely occurred (with a grace period to account for reconciliation delays)
-		gracePeriod := 30 * time.Second
-		now := time.Now()
-		if now.After(nextSchedule.Add(gracePeriod)) {
-			log.Info("CronJob schedule skipped due to active jobs (Forbid policy)",
-				"listcronjob", listCronJob.Name,
-				"cronjob", cronJob.Name,
-				"namespace", cronJob.Namespace,
-				"schedule", listCronJob.Spec.Schedule,
-				"lastScheduleTime", cronJob.Status.LastScheduleTime.Time,
-				"expectedNextSchedule", nextSchedule,
-				"activeJobs", len(cronJob.Status.Active))
+	// Detect skipped cycles for Forbid policy by querying Events for this specific CronJob
+	if listCronJob.Spec.ConcurrencyPolicy == batchv1.ForbidConcurrent {
+		if err := r.detectSkippedCycles(ctx, listCronJob, cronJob); err != nil {
+			log.V(1).Info("Failed to detect skipped cycles", "error", err)
+			// Don't fail reconciliation for this
 		}
 	}
 
 	return nil
 }
 
-// getNextScheduleTime calculates the next scheduled run time after the given time
-func getNextScheduleTime(schedule string, after time.Time) (time.Time, error) {
-	sched, err := cron.ParseStandard(schedule)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse cron schedule %q: %w", schedule, err)
+// detectSkippedCycles queries Events for the specific CronJob and logs any JobAlreadyActive events
+func (r *ListCronJobReconciler) detectSkippedCycles(ctx context.Context, listCronJob *batchopsv1alpha1.ListCronJob, cronJob *batchv1.CronJob) error {
+	log := ctrl.LoggerFrom(ctx)
+
+	// List events for this specific CronJob using field selector
+	eventList := &corev1.EventList{}
+	if err := r.List(ctx, eventList,
+		client.InNamespace(cronJob.Namespace),
+		client.MatchingFields{"involvedObject.name": cronJob.Name},
+	); err != nil {
+		return fmt.Errorf("failed to list events for CronJob: %w", err)
 	}
-	return sched.Next(after), nil
+
+	// Look for recent JobAlreadyActive events
+	now := time.Now()
+	recentWindow := 5 * time.Minute // Only consider events from last 5 minutes
+
+	for _, event := range eventList.Items {
+		// Filter for JobAlreadyActive events on CronJobs
+		if event.Reason != "JobAlreadyActive" ||
+			event.InvolvedObject.Kind != "CronJob" ||
+			event.InvolvedObject.APIVersion != "batch/v1" {
+			continue
+		}
+
+		// Check if event is recent
+		eventTime := event.LastTimestamp.Time
+		if eventTime.IsZero() {
+			eventTime = event.EventTime.Time
+		}
+		if now.Sub(eventTime) > recentWindow {
+			continue
+		}
+
+		// Check if we've already processed this event
+		eventUID := string(event.UID)
+		if listCronJob.Status.LastSkipEventUID == eventUID {
+			continue
+		}
+
+		// New skip event found - log it!
+		log.Info("CronJob schedule skipped due to active jobs (Forbid policy)",
+			"listcronjob", listCronJob.Name,
+			"cronjob", cronJob.Name,
+			"namespace", cronJob.Namespace,
+			"schedule", listCronJob.Spec.Schedule,
+			"eventTime", eventTime,
+			"eventMessage", event.Message)
+
+		// Increment skip metric
+		metrics.CronJobCyclesSkipped.WithLabelValues(
+			listCronJob.Name,
+			listCronJob.Namespace,
+			"forbid_policy",
+		).Inc()
+
+		// Update status to track this event (with retry on conflict)
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := r.Get(ctx, client.ObjectKeyFromObject(listCronJob), listCronJob); err != nil {
+				return err
+			}
+			listCronJob.Status.LastSkipEventUID = eventUID
+			return r.Status().Update(ctx, listCronJob)
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update LastSkipEventUID: %w", err)
+		}
+
+		// Only process the most recent event
+		break
+	}
+
+	return nil
 }
 
 // findObjectsForConfigMap maps a ConfigMap to ListCronJobs that reference it

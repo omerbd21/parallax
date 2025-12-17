@@ -50,4 +50,14 @@ operator:
   logLevel: info
   leaderElection: true
   metricsAddr: ":8080"
-  healthProbeAddr: ":8081" 
+  healthProbeAddr: ":8081"
+
+# Metrics configuration
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: HTTP
+    labels: {}
+    honorLabels: false 

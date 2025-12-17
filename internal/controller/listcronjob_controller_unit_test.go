@@ -389,127 +389,16 @@ func TestFindListCronJobForCronJob_NoOwner(t *testing.T) {
 	assert.Len(t, requests, 0)
 }
 
-// TestGetNextScheduleTime verifies that the cron schedule parser correctly calculates
-// the next scheduled run time for various cron expressions.
-func TestGetNextScheduleTime(t *testing.T) {
-	tests := []struct {
-		name     string
-		schedule string
-		after    time.Time
-		wantErr  bool
-	}{
-		{
-			name:     "Every minute",
-			schedule: "*/1 * * * *",
-			after:    time.Date(2025, 1, 1, 10, 30, 0, 0, time.UTC),
-			wantErr:  false,
-		},
-		{
-			name:     "Every hour",
-			schedule: "0 * * * *",
-			after:    time.Date(2025, 1, 1, 10, 30, 0, 0, time.UTC),
-			wantErr:  false,
-		},
-		{
-			name:     "Daily at midnight",
-			schedule: "0 0 * * *",
-			after:    time.Date(2025, 1, 1, 10, 30, 0, 0, time.UTC),
-			wantErr:  false,
-		},
-		{
-			name:     "Invalid schedule",
-			schedule: "invalid cron",
-			after:    time.Date(2025, 1, 1, 10, 30, 0, 0, time.UTC),
-			wantErr:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			nextTime, err := getNextScheduleTime(tt.schedule, tt.after)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				assert.True(t, nextTime.After(tt.after), "Next schedule time should be after the given time")
-			}
-		})
-	}
-}
-
-// TestTrackCronJobCycles_SkipDetection verifies that when a CronJob with Forbid policy
-// has active jobs and the current time is past the next expected schedule time, a skip
-// is detected and logged. This uses status inference instead of watching Events.
-func TestTrackCronJobCycles_SkipDetection(t *testing.T) {
+// TestDetectSkippedCycles_WithJobAlreadyActiveEvent verifies that when a JobAlreadyActive
+// event exists for a CronJob, it is detected and logged, and the event UID is tracked in
+// status to prevent duplicate logging.
+func TestDetectSkippedCycles_WithJobAlreadyActiveEvent(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, batchopsv1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, batchv1.AddToScheme(scheme))
 
-	// Use a time in the past so we're definitely past the next schedule
-	pastTime := metav1.NewTime(time.Now().Add(-5 * time.Minute))
-
-	listCronJob := &batchopsv1alpha1.ListCronJob{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-cronjob",
-			Namespace: "default",
-		},
-		Spec: batchopsv1alpha1.ListCronJobSpec{
-			Schedule:          "*/1 * * * *", // Every minute
-			ConcurrencyPolicy: batchv1.ForbidConcurrent,
-			StaticList:        []string{"item1"},
-			Parallelism:       1,
-			Template: batchopsv1alpha1.JobTemplateSpec{
-				Image:   "busybox",
-				Command: []string{"echo"},
-			},
-		},
-		Status: batchopsv1alpha1.ListCronJobStatus{
-			LastScheduleTime: &pastTime,
-		},
-	}
-
-	// CronJob has active jobs and last schedule was 5 minutes ago
-	cronJob := &batchv1.CronJob{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-cronjob",
-			Namespace: "default",
-		},
-		Status: batchv1.CronJobStatus{
-			LastScheduleTime: &pastTime,
-			Active: []corev1.ObjectReference{
-				{Name: "job-1", Namespace: "default"},
-			},
-		},
-	}
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(listCronJob).
-		WithStatusSubresource(listCronJob).
-		Build()
-
-	reconciler := &ListCronJobReconciler{
-		Client: fakeClient,
-		Scheme: scheme,
-	}
-
-	ctx := context.Background()
-	err := reconciler.trackCronJobCycles(ctx, listCronJob, cronJob)
-	require.NoError(t, err)
-	// The skip should be detected and logged (check logs in real usage)
-}
-
-// TestTrackCronJobCycles_NoSkipWhenNoActiveJobs verifies that when there are no active
-// jobs, no skip is detected even if we're past the next schedule time (because a new
-// cycle should have started).
-func TestTrackCronJobCycles_NoSkipWhenNoActiveJobs(t *testing.T) {
-	scheme := runtime.NewScheme()
-	require.NoError(t, batchopsv1alpha1.AddToScheme(scheme))
-	require.NoError(t, corev1.AddToScheme(scheme))
-	require.NoError(t, batchv1.AddToScheme(scheme))
-
-	pastTime := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+	recentTime := metav1.NewTime(time.Now().Add(-1 * time.Minute))
 
 	listCronJob := &batchopsv1alpha1.ListCronJob{
 		ObjectMeta: metav1.ObjectMeta{
@@ -527,26 +416,50 @@ func TestTrackCronJobCycles_NoSkipWhenNoActiveJobs(t *testing.T) {
 			},
 		},
 		Status: batchopsv1alpha1.ListCronJobStatus{
-			LastScheduleTime: &pastTime,
+			LastSkipEventUID: "", // No event processed yet
 		},
 	}
 
-	// CronJob has NO active jobs
 	cronJob := &batchv1.CronJob{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cronjob",
 			Namespace: "default",
 		},
 		Status: batchv1.CronJobStatus{
-			LastScheduleTime: &pastTime,
-			Active:           []corev1.ObjectReference{}, // No active jobs
+			LastScheduleTime: &recentTime,
+			Active: []corev1.ObjectReference{
+				{Name: "job-1", Namespace: "default"},
+			},
 		},
+	}
+
+	// Create a JobAlreadyActive event
+	event := &corev1.Event{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-event",
+			Namespace: "default",
+			UID:       "event-uid-123",
+		},
+		InvolvedObject: corev1.ObjectReference{
+			APIVersion: "batch/v1",
+			Kind:       "CronJob",
+			Name:       "test-cronjob",
+			Namespace:  "default",
+		},
+		Reason:        "JobAlreadyActive",
+		Message:       "Not starting job because 1 active jobs already exist",
+		Type:          corev1.EventTypeNormal,
+		LastTimestamp: recentTime,
 	}
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(listCronJob).
+		WithObjects(listCronJob, cronJob, event).
 		WithStatusSubresource(listCronJob).
+		WithIndex(&corev1.Event{}, "involvedObject.name", func(obj client.Object) []string {
+			event := obj.(*corev1.Event)
+			return []string{event.InvolvedObject.Name}
+		}).
 		Build()
 
 	reconciler := &ListCronJobReconciler{
@@ -555,7 +468,153 @@ func TestTrackCronJobCycles_NoSkipWhenNoActiveJobs(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := reconciler.trackCronJobCycles(ctx, listCronJob, cronJob)
+	err := reconciler.detectSkippedCycles(ctx, listCronJob, cronJob)
 	require.NoError(t, err)
-	// No skip should be logged
+
+	// Verify the event UID was tracked in status
+	var updated batchopsv1alpha1.ListCronJob
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(listCronJob), &updated)
+	require.NoError(t, err)
+	assert.Equal(t, "event-uid-123", updated.Status.LastSkipEventUID)
+}
+
+// TestDetectSkippedCycles_DuplicateEventNotLogged verifies that when the same event
+// UID has already been processed, it is not logged again (deduplication works).
+func TestDetectSkippedCycles_DuplicateEventNotLogged(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, batchopsv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, batchv1.AddToScheme(scheme))
+
+	recentTime := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+
+	listCronJob := &batchopsv1alpha1.ListCronJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cronjob",
+			Namespace: "default",
+		},
+		Spec: batchopsv1alpha1.ListCronJobSpec{
+			Schedule:          "*/1 * * * *",
+			ConcurrencyPolicy: batchv1.ForbidConcurrent,
+			StaticList:        []string{"item1"},
+			Parallelism:       1,
+			Template: batchopsv1alpha1.JobTemplateSpec{
+				Image:   "busybox",
+				Command: []string{"echo"},
+			},
+		},
+		Status: batchopsv1alpha1.ListCronJobStatus{
+			LastSkipEventUID: "event-uid-123", // Already processed
+		},
+	}
+
+	cronJob := &batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cronjob",
+			Namespace: "default",
+		},
+	}
+
+	// Create the same event that was already processed
+	event := &corev1.Event{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-event",
+			Namespace: "default",
+			UID:       "event-uid-123", // Same UID as in status
+		},
+		InvolvedObject: corev1.ObjectReference{
+			APIVersion: "batch/v1",
+			Kind:       "CronJob",
+			Name:       "test-cronjob",
+			Namespace:  "default",
+		},
+		Reason:        "JobAlreadyActive",
+		Message:       "Not starting job because 1 active jobs already exist",
+		Type:          corev1.EventTypeNormal,
+		LastTimestamp: recentTime,
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(listCronJob, cronJob, event).
+		WithStatusSubresource(listCronJob).
+		WithIndex(&corev1.Event{}, "involvedObject.name", func(obj client.Object) []string {
+			event := obj.(*corev1.Event)
+			return []string{event.InvolvedObject.Name}
+		}).
+		Build()
+
+	reconciler := &ListCronJobReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	ctx := context.Background()
+	err := reconciler.detectSkippedCycles(ctx, listCronJob, cronJob)
+	require.NoError(t, err)
+
+	// Verify status wasn't updated (event UID stays the same)
+	var updated batchopsv1alpha1.ListCronJob
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(listCronJob), &updated)
+	require.NoError(t, err)
+	assert.Equal(t, "event-uid-123", updated.Status.LastSkipEventUID)
+}
+
+// TestDetectSkippedCycles_NoEventsFound verifies that when no JobAlreadyActive events
+// exist for the CronJob, no errors occur and nothing is logged.
+func TestDetectSkippedCycles_NoEventsFound(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, batchopsv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, batchv1.AddToScheme(scheme))
+
+	listCronJob := &batchopsv1alpha1.ListCronJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cronjob",
+			Namespace: "default",
+		},
+		Spec: batchopsv1alpha1.ListCronJobSpec{
+			Schedule:          "*/1 * * * *",
+			ConcurrencyPolicy: batchv1.ForbidConcurrent,
+			StaticList:        []string{"item1"},
+			Parallelism:       1,
+			Template: batchopsv1alpha1.JobTemplateSpec{
+				Image:   "busybox",
+				Command: []string{"echo"},
+			},
+		},
+	}
+
+	cronJob := &batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cronjob",
+			Namespace: "default",
+		},
+	}
+
+	// No events created
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(listCronJob, cronJob).
+		WithStatusSubresource(listCronJob).
+		WithIndex(&corev1.Event{}, "involvedObject.name", func(obj client.Object) []string {
+			event := obj.(*corev1.Event)
+			return []string{event.InvolvedObject.Name}
+		}).
+		Build()
+
+	reconciler := &ListCronJobReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+	}
+
+	ctx := context.Background()
+	err := reconciler.detectSkippedCycles(ctx, listCronJob, cronJob)
+	require.NoError(t, err)
+
+	// Verify no status update occurred
+	var updated batchopsv1alpha1.ListCronJob
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(listCronJob), &updated)
+	require.NoError(t, err)
+	assert.Empty(t, updated.Status.LastSkipEventUID)
 }

@@ -94,6 +94,57 @@ resources:
 operator:
   logLevel: debug
   leaderElection: true
+
+# Metrics and monitoring
+metrics:
+  enabled: true
+  service:
+    port: 8080
+    type: ClusterIP
+  serviceMonitor:
+    enabled: true  # Requires Prometheus Operator
+    interval: 30s
+```
+
+### Metrics Configuration
+
+The operator exposes Prometheus metrics on port 8080 for monitoring ListCronJob cycles. See [METRICS.md](../../METRICS.md) for detailed documentation.
+
+**Option 1: Pod Annotations (Simplest)**
+```yaml
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+```
+
+**Option 2: ServiceMonitor (Prometheus Operator)**
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      prometheus: kube-prometheus  # Match your Prometheus selector
+```
+
+**Available metrics:**
+- `parallax_cronjob_cycles_started_total` - Total cycles started
+- `parallax_cronjob_cycles_skipped_total` - Total cycles skipped
+- `parallax_cronjob_cycle_duration_seconds` - Cycle duration
+- `parallax_cronjob_active_jobs` - Current active jobs
+
+**Example PromQL queries:**
+```promql
+# Cycle start rate
+rate(parallax_cronjob_cycles_started_total[5m])
+
+# Skip percentage
+(rate(parallax_cronjob_cycles_skipped_total[5m]) / rate(parallax_cronjob_cycles_started_total[5m])) * 100
+
+# Average cycle duration
+avg(parallax_cronjob_cycle_duration_seconds)
 ```
 
 ## Upgrading

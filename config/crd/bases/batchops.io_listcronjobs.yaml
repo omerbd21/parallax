@@ -4748,6 +4748,11 @@ spec:
               lastScheduleTime:
                 format: date-time
                 type: string
+              lastSkipEventUID:
+                description: |-
+                  LastSkipEventUID tracks the UID of the last JobAlreadyActive event we've processed
+                  to avoid duplicate logging of the same skip event
+                type: string
             type: object
         type: object
     served: true
