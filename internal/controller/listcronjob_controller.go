@@ -392,6 +392,16 @@ func (r *ListCronJobReconciler) trackCronJobCycles(ctx context.Context, listCron
 		listCronJob.Namespace,
 	).Set(float64(len(cronJob.Status.Active)))
 
+	// Track cycle duration when cycle completes (active jobs = 0)
+	if len(cronJob.Status.Active) == 0 && listCronJob.Status.LastScheduleTime != nil {
+		// Calculate actual execution time (from schedule start to completion)
+		duration := time.Since(listCronJob.Status.LastScheduleTime.Time).Seconds()
+		metrics.CronJobCycleDuration.WithLabelValues(
+			listCronJob.Name,
+			listCronJob.Namespace,
+		).Set(duration)
+	}
+
 	// Check if a new cycle started
 	if cronJob.Status.LastScheduleTime != nil {
 		// Compare with our tracked last schedule time
@@ -411,15 +421,6 @@ func (r *ListCronJobReconciler) trackCronJobCycles(ctx context.Context, listCron
 				listCronJob.Name,
 				listCronJob.Namespace,
 			).Inc()
-
-			// Calculate and record cycle duration if we have a previous schedule time
-			if listCronJob.Status.LastScheduleTime != nil {
-				duration := cronJob.Status.LastScheduleTime.Time.Sub(listCronJob.Status.LastScheduleTime.Time).Seconds()
-				metrics.CronJobCycleDuration.WithLabelValues(
-					listCronJob.Name,
-					listCronJob.Namespace,
-				).Set(duration)
-			}
 
 			// Update our tracked time with retry on conflict
 			newScheduleTime := cronJob.Status.LastScheduleTime

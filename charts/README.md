@@ -108,7 +108,7 @@ metrics:
 
 ### Metrics Configuration
 
-The operator exposes Prometheus metrics on port 8080 for monitoring ListCronJob cycles. See [METRICS.md](../../METRICS.md) for detailed documentation.
+The operator exposes Prometheus metrics on port 8080 for monitoring ListCronJob cycles.
 
 **Option 1: Pod Annotations (Simplest)**
 ```yaml
