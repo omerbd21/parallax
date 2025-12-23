@@ -262,14 +262,28 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "ServiceAccount should exist")
 
+			By("discovering ClusterRole by label")
+			cmd = exec.Command("kubectl", "get", "clusterrole", "-l", "app.kubernetes.io/name=parallax",
+				"-o", "jsonpath={.items[?(@.metadata.name=~'.*manager-role')].metadata.name}")
+			clusterRoleOutput, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to list ClusterRoles")
+			Expect(clusterRoleOutput).NotTo(BeEmpty(), "ClusterRole with 'manager-role' should exist")
+			clusterRoleName := clusterRoleOutput
+
 			By("verifying ClusterRole exists")
-			clusterRoleName := "parallax-controller-manager-manager-role"
 			cmd = exec.Command("kubectl", "get", "clusterrole", clusterRoleName)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "ClusterRole should exist")
 
-			By("verifying ClusterRoleBinding exists and links SA to Role")
-			clusterRoleBindingName := "parallax-controller-manager-manager-rolebinding"
+			By("discovering ClusterRoleBinding by label")
+			cmd = exec.Command("kubectl", "get", "clusterrolebinding", "-l", "app.kubernetes.io/name=parallax",
+				"-o", "jsonpath={.items[?(@.metadata.name=~'.*manager.*rolebinding')].metadata.name}")
+			clusterRoleBindingOutput, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to list ClusterRoleBindings")
+			Expect(clusterRoleBindingOutput).NotTo(BeEmpty(), "ClusterRoleBinding should exist")
+			clusterRoleBindingName := clusterRoleBindingOutput
+
+			By("verifying ClusterRoleBinding links SA to Role")
 			cmd = exec.Command("kubectl", "get", "clusterrolebinding", clusterRoleBindingName, "-o", "json")
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "ClusterRoleBinding should exist")
@@ -330,14 +344,28 @@ var _ = Describe("Manager", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output).To(ContainSubstring("yes"), "ServiceAccount should be able to update listcronjob status")
 
+			By("discovering Role for leader election by label")
+			cmd = exec.Command("kubectl", "get", "role", "-n", namespace, "-l", "app.kubernetes.io/name=parallax",
+				"-o", "jsonpath={.items[?(@.metadata.name=~'.*leader-election.*')].metadata.name}")
+			leaderRoleOutput, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to list Roles")
+			Expect(leaderRoleOutput).NotTo(BeEmpty(), "Leader election Role should exist")
+			leaderElectionRoleName := leaderRoleOutput
+
 			By("verifying Role for leader election exists")
-			leaderElectionRoleName := "parallax-controller-manager-leader-election-role"
 			cmd = exec.Command("kubectl", "get", "role", leaderElectionRoleName, "-n", namespace)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Leader election Role should exist")
 
+			By("discovering RoleBinding for leader election by label")
+			cmd = exec.Command("kubectl", "get", "rolebinding", "-n", namespace, "-l", "app.kubernetes.io/name=parallax",
+				"-o", "jsonpath={.items[?(@.metadata.name=~'.*leader-election.*')].metadata.name}")
+			leaderRoleBindingOutput, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to list RoleBindings")
+			Expect(leaderRoleBindingOutput).NotTo(BeEmpty(), "Leader election RoleBinding should exist")
+			leaderElectionRoleBindingName := leaderRoleBindingOutput
+
 			By("verifying RoleBinding for leader election exists")
-			leaderElectionRoleBindingName := "parallax-controller-manager-leader-election-rolebinding"
 			cmd = exec.Command("kubectl", "get", "rolebinding", leaderElectionRoleBindingName, "-n", namespace)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Leader election RoleBinding should exist")
