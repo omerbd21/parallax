@@ -52,6 +52,10 @@ type ListCronJobStatus struct {
 	Conditions       []metav1.Condition       `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 	Active           []corev1.ObjectReference `json:"active,omitempty"`
 	LastScheduleTime *metav1.Time             `json:"lastScheduleTime,omitempty"`
+	// LastSkipEventUID tracks the UID of the last JobAlreadyActive event we've processed
+	// to avoid duplicate logging of the same skip event
+	// +optional
+	LastSkipEventUID string `json:"lastSkipEventUID,omitempty"`
 }
 
 // +kubebuilder:object:root=true
