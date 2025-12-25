@@ -27,7 +27,7 @@ jobs:
             test_pattern: "Upgrade Scenarios"
           - name: "chart-validation"
             test_pattern: "Chart Validation"
-          - name: "manager-rbac-tests"
+          - name: "manager-tests"
             test_pattern: "Manager"
 
     steps:
