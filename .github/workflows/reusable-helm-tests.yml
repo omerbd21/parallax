@@ -27,6 +27,8 @@ jobs:
             test_pattern: "Upgrade Scenarios"
           - name: "chart-validation"
             test_pattern: "Chart Validation"
+          - name: "manager-rbac-tests"
+            test_pattern: "Manager"
 
     steps:
     - name: Checkout code
@@ -54,6 +56,7 @@ jobs:
     - name: Run Helm test - ${{ matrix.scenario.name }}
       run: |
         export KUBECONFIG="/home/runner/.kube/config"
+        export E2E_CLUSTER_NAME="helm-${{ matrix.scenario.name }}"
         export HELM_IMAGE_REPOSITORY=parallax
         export HELM_IMAGE_TAG=e2e-test
         export HELM_IMAGE_PULL_POLICY=Never

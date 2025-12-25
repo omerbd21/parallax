@@ -256,6 +256,103 @@ var _ = Describe("Manager", Ordered, func() {
 			))
 		})
 
+		It("should have correct RBAC permissions", func() {
+			By("verifying ServiceAccount exists")
+			cmd := exec.Command("kubectl", "get", "serviceaccount", serviceAccountName, "-n", namespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "ServiceAccount should exist")
+
+			// Resource names from make deploy (config/default/kustomization.yaml with namePrefix: parallax-)
+			clusterRoleName := "parallax-manager-role"
+			clusterRoleBindingName := "parallax-manager-rolebinding"
+			leaderElectionRoleName := "parallax-leader-election-role"
+			leaderElectionRoleBindingName := "parallax-leader-election-rolebinding"
+
+			By("verifying ClusterRole exists")
+			cmd = exec.Command("kubectl", "get", "clusterrole", clusterRoleName)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "ClusterRole should exist")
+
+			By("verifying ClusterRoleBinding exists and links SA to Role")
+			cmd = exec.Command("kubectl", "get", "clusterrolebinding", clusterRoleBindingName, "-o", "json")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "ClusterRoleBinding should exist")
+			Expect(output).To(ContainSubstring(serviceAccountName), "ClusterRoleBinding should reference ServiceAccount")
+			Expect(output).To(ContainSubstring(clusterRoleName), "ClusterRoleBinding should reference ClusterRole")
+
+			By("verifying ClusterRole has permissions for events")
+			cmd = exec.Command("kubectl", "get", "clusterrole", clusterRoleName, "-o", "jsonpath={.rules}")
+			rulesOutput, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rulesOutput).To(ContainSubstring("events"), "ClusterRole should have events resource")
+			Expect(rulesOutput).To(ContainSubstring("get"), "ClusterRole should have get verb for events")
+			Expect(rulesOutput).To(ContainSubstring("list"), "ClusterRole should have list verb for events")
+
+			By("verifying ClusterRole has permissions for cronjobs")
+			Expect(rulesOutput).To(ContainSubstring("cronjobs"), "ClusterRole should have cronjobs resource")
+			Expect(rulesOutput).To(ContainSubstring("watch"), "ClusterRole should have watch verb")
+
+			By("verifying ClusterRole has permissions for ListCronJobs")
+			Expect(rulesOutput).To(ContainSubstring("listcronjobs"), "ClusterRole should have listcronjobs resource")
+
+			By("verifying ClusterRole has permissions for configmaps")
+			Expect(rulesOutput).To(ContainSubstring("configmaps"), "ClusterRole should have configmaps resource")
+
+			By("testing actual permissions with auth can-i")
+			// Test that the ServiceAccount can get events
+			cmd = exec.Command("kubectl", "auth", "can-i", "get", "events",
+				"--as", fmt.Sprintf("system:serviceaccount:%s:%s", namespace, serviceAccountName))
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(ContainSubstring("yes"), "ServiceAccount should be able to get events")
+
+			// Test that the ServiceAccount can list events
+			cmd = exec.Command("kubectl", "auth", "can-i", "list", "events",
+				"--as", fmt.Sprintf("system:serviceaccount:%s:%s", namespace, serviceAccountName))
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(ContainSubstring("yes"), "ServiceAccount should be able to list events")
+
+			// Test that the ServiceAccount can watch cronjobs
+			cmd = exec.Command("kubectl", "auth", "can-i", "watch", "cronjobs",
+				"--as", fmt.Sprintf("system:serviceaccount:%s:%s", namespace, serviceAccountName))
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(ContainSubstring("yes"), "ServiceAccount should be able to watch cronjobs")
+
+			// Test that the ServiceAccount can get/update listcronjobs
+			cmd = exec.Command("kubectl", "auth", "can-i", "get", "listcronjobs.batchops.io",
+				"--as", fmt.Sprintf("system:serviceaccount:%s:%s", namespace, serviceAccountName))
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(ContainSubstring("yes"), "ServiceAccount should be able to get listcronjobs")
+
+			// Test that the ServiceAccount can update listcronjob status
+			cmd = exec.Command("kubectl", "auth", "can-i", "update", "listcronjobs/status",
+				"--as", fmt.Sprintf("system:serviceaccount:%s:%s", namespace, serviceAccountName))
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(ContainSubstring("yes"), "ServiceAccount should be able to update listcronjob status")
+
+			By("verifying Role for leader election exists")
+			cmd = exec.Command("kubectl", "get", "role", leaderElectionRoleName, "-n", namespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Leader election Role should exist")
+
+			By("verifying RoleBinding for leader election exists")
+			cmd = exec.Command("kubectl", "get", "rolebinding", leaderElectionRoleBindingName, "-n", namespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Leader election RoleBinding should exist")
+
+			By("verifying leader election Role has correct permissions")
+			cmd = exec.Command("kubectl", "get", "role", leaderElectionRoleName, "-n", namespace, "-o", "jsonpath={.rules}")
+			leaderRulesOutput, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leaderRulesOutput).To(ContainSubstring("leases"), "Leader election Role should have leases resource")
+			Expect(leaderRulesOutput).To(ContainSubstring("configmaps"), "Leader election Role should have configmaps resource")
+			Expect(leaderRulesOutput).To(ContainSubstring("events"), "Leader election Role should have events resource for leader election")
+		})
+
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
