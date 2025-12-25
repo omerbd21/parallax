@@ -9,6 +9,43 @@ spec:
     image: "busybox"
     command: ["echo", "Processing fruit: $ITEM"]
     envName: "ITEM"
+    labels:
+      app: "fruit-processor"
+      component: "worker"
+    volumes:
+      - name: data
+        emptyDir: {}
+      # Example: Mount a ConfigMap as a volume
+      # - name: config
+      #   configMap:
+      #     name: my-config
+    volumeMounts:
+      - name: data
+        mountPath: /data
+      # Example: Mount the ConfigMap
+      # - name: config
+      #   mountPath: /etc/config
+      #   readOnly: true
+    ports:
+      - containerPort: 8080
+        name: http
+        protocol: TCP
+      # Example: Add more ports
+      # - containerPort: 9090
+      #   name: metrics
+      #   protocol: TCP
+    initContainers:
+      # Example: Run a custom init container before the parallax-init container
+      - name: setup
+        image: busybox
+        command: ["sh", "-c", "echo 'Setting up...' && sleep 1"]
+      # Example: Download dependencies
+      # - name: download-deps
+      #   image: curlimages/curl
+      #   command: ["sh", "-c", "curl -o /data/config.json https://example.com/config.json"]
+      #   volumeMounts:
+      #     - name: data
+      #       mountPath: /data
     resources:
       requests:
         cpu: "100m"

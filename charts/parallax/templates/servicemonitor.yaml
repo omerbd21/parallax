@@ -1,0 +1,29 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "parallax.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "parallax.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "parallax.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+      path: /metrics
+      scheme: {{ .Values.metrics.serviceMonitor.scheme | default "HTTP" }}
+      {{- if .Values.metrics.serviceMonitor.honorLabels }}
+      honorLabels: true
+      {{- end }}
+{{- end }}
+

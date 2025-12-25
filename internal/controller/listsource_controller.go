@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/jsonpath"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -151,22 +152,29 @@ func (r *ListSourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	items, err := r.getItems(ctx, &listSource)
 	if err != nil {
 		log.Error(err, "Failed to fetch items from source")
-		// Set error condition
-		meta.SetStatusCondition(&listSource.Status.Conditions, metav1.Condition{
-			Type:    ConditionTypeReady,
-			Status:  metav1.ConditionFalse,
-			Reason:  "FetchFailed",
-			Message: fmt.Sprintf("Failed to fetch items: %v", err),
+		// Set error condition with retry on conflict
+		fetchErr := err
+		updateErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := r.Get(ctx, client.ObjectKeyFromObject(&listSource), &listSource); err != nil {
+				return err
+			}
+			meta.SetStatusCondition(&listSource.Status.Conditions, metav1.Condition{
+				Type:    ConditionTypeReady,
+				Status:  metav1.ConditionFalse,
+				Reason:  "FetchFailed",
+				Message: fmt.Sprintf("Failed to fetch items: %v", fetchErr),
+			})
+			listSource.Status.Error = fetchErr.Error()
+			listSource.Status.State = "Error" // Keep for backward compatibility
+			listSource.Status.LastUpdateTime = &metav1.Time{Time: time.Now()}
+			return r.Status().Update(ctx, &listSource)
 		})
-		listSource.Status.Error = err.Error()
-		listSource.Status.State = "Error" // Keep for backward compatibility
-		listSource.Status.LastUpdateTime = &metav1.Time{Time: time.Now()}
-		if err := r.Status().Update(ctx, &listSource); err != nil {
-			log.Error(err, "Unable to update ListSource status with error information")
-			return result, err
+		if updateErr != nil {
+			log.Error(updateErr, "Unable to update ListSource status with error information")
+			return result, updateErr
 		}
-		r.Recorder.Event(&listSource, corev1.EventTypeWarning, "FetchFailed", fmt.Sprintf("Failed to fetch items: %v", err))
-		return result, err
+		r.Recorder.Event(&listSource, corev1.EventTypeWarning, "FetchFailed", fmt.Sprintf("Failed to fetch items: %v", fetchErr))
+		return result, fetchErr
 	}
 	log.Info("Successfully fetched items from source", "items_found", len(items))
 
@@ -261,9 +269,16 @@ func (r *ListSourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	if statusChanged {
 		oldStatus := listSource.Status.DeepCopy()
-		listSource.Status = newStatus
 
-		if err := r.Status().Update(ctx, &listSource); err != nil {
+		// Update status with retry on conflict
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := r.Get(ctx, client.ObjectKeyFromObject(&listSource), &listSource); err != nil {
+				return err
+			}
+			listSource.Status = newStatus
+			return r.Status().Update(ctx, &listSource)
+		})
+		if err != nil {
 			log.Error(err, "Unable to update ListSource status")
 			return result, err
 		}

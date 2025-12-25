@@ -27,12 +27,13 @@ import (
 
 // ListCronJobSpec defines the desired state of ListCronJob.
 type ListCronJobSpec struct {
-	ListSourceRef              string                    `json:"listSourceRef,omitempty"`
-	StaticList                 []string                  `json:"staticList,omitempty"`
-	Parallelism                int32                     `json:"parallelism"`
-	Template                   JobTemplateSpec           `json:"template"`
-	TTLSecondsAfterFinished    *int32                    `json:"ttlSecondsAfterFinished,omitempty"`
-	Schedule                   string                    `json:"schedule"`
+	ListSourceRef           string          `json:"listSourceRef,omitempty"`
+	StaticList              []string        `json:"staticList,omitempty"`
+	Parallelism             int32           `json:"parallelism"`
+	Template                JobTemplateSpec `json:"template"`
+	TTLSecondsAfterFinished *int32          `json:"ttlSecondsAfterFinished,omitempty"`
+	Schedule                string          `json:"schedule"`
+	// +kubebuilder:default=Forbid
 	ConcurrencyPolicy          batchv1.ConcurrencyPolicy `json:"concurrencyPolicy,omitempty"`
 	StartingDeadlineSeconds    *int64                    `json:"startingDeadlineSeconds,omitempty"`
 	SuccessfulJobsHistoryLimit *int32                    `json:"successfulJobsHistoryLimit,omitempty"`
@@ -51,6 +52,10 @@ type ListCronJobStatus struct {
 	Conditions       []metav1.Condition       `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 	Active           []corev1.ObjectReference `json:"active,omitempty"`
 	LastScheduleTime *metav1.Time             `json:"lastScheduleTime,omitempty"`
+	// LastSkipEventUID tracks the UID of the last JobAlreadyActive event we've processed
+	// to avoid duplicate logging of the same skip event
+	// +optional
+	LastSkipEventUID string `json:"lastSkipEventUID,omitempty"`
 }
 
 // +kubebuilder:object:root=true

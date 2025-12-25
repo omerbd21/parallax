@@ -31,7 +31,10 @@ rules:
   - events
   verbs:
   - create
+  - get
+  - list
   - patch
+  - watch
 - apiGroups:
   - batch
   resources:
